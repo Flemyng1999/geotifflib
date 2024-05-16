@@ -43,7 +43,7 @@ def read_geo(
 
 
 def read(
-    file: Union[Path, str]
+    file_path: Union[Path, str]
 ) -> Optional[np.ndarray]:
     '''
     Read tif file as array
@@ -55,9 +55,9 @@ def read(
     if isinstance(file_path, Path):
         file_path = str(file_path)
 
-    data_set = gdal.Open(file, gdal.GA_ReadOnly)
+    data_set = gdal.Open(file_path, gdal.GA_ReadOnly)
     if data_set is None:
-        print(f"Cannot open {file}")
+        print(f"Cannot open {file_path}")
         return None
 
     img_width = data_set.RasterXSize
