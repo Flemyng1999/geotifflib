@@ -23,4 +23,9 @@ setup(
     install_requires=[
         'numpy',
     ],
+    entry_points={
+        'console_scripts': [
+            'geotifflib = geotifflib.main:main'
+        ]
+    }
 )

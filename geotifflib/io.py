@@ -335,11 +335,14 @@ def merge(
 
 if __name__ == '__main__':
     # 测试
-    input_files_pathes = [
-        '/Volumes/2023HSI/raw/2023_07_17/5ref/1_corr_elm.tif',
-        '/Volumes/2023HSI/raw/2023_07_17/5ref/3_corr_elm.tif'
-    ]
-    output_path = Path('/Volumes/2023HSI/raw/2023_07_17/5ref/1and3_corr_elm.tif')
+    # input_files_pathes = [
+    #     '/Volumes/2023HSI/raw/2023_07_17/5ref/1_corr_elm.tif',
+    #     '/Volumes/2023HSI/raw/2023_07_17/5ref/3_corr_elm.tif'
+    # ]
+    # output_path = Path('/Volumes/2023HSI/raw/2023_07_17/5ref/1and3_corr_elm.tif')
 
-    # 合并图像
-    merge(input_files_pathes, output_path)
+    # # 合并图像
+    # merge(input_files_pathes, output_path)
+
+    tif_path = Path('/Volumes/2023HSI/raw/2023_07_17/5ref/1and3_corr_elm.tif')
+    data, geotransform, projection = read(tif_path)
