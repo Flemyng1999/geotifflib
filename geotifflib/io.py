@@ -9,22 +9,26 @@
 
 import os
 from pathlib import Path
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Union
 
 from osgeo import gdal
 import numpy as np
 
 
 def read(
-    file_path: Path
+    file_path: Union[Path, str]
 ) -> Tuple[Optional[np.ndarray], Optional[tuple], Optional[str]]:
     '''
     Read tif file
 
-    param: file_path: Path, tif file path
-    return: data: np.ndarray, geotransform: tuple, projection: str
+    param: file_path: Path or str, tif file path
+    return: data: np.ndarray [band, width, height], geotransform: tuple, projection: str
     '''
-    ds = gdal.Open(str(file_path))
+    # 如果输入是 Path，将其转换为 str 对象
+    if isinstance(file_path, Path):
+        file_path = str(file_path)
+
+    ds = gdal.Open(file_path)
     if ds is None:
         print(f"Cannot open {file_path}")
         return None, None, None
@@ -39,7 +43,7 @@ def read(
 
 
 def read_array(
-    file: Path
+    file: Union[Path, str]
 ) -> Optional[np.ndarray]:
     '''
     Read tif file as array
@@ -47,7 +51,11 @@ def read_array(
     param: file: Path, tif file path
     return: data: np.ndarray
     '''
-    data_set = gdal.Open(str(file), gdal.GA_ReadOnly)
+    # 如果输入是 Path，将其转换为 str 对象
+    if isinstance(file_path, Path):
+        file_path = str(file_path)
+
+    data_set = gdal.Open(file, gdal.GA_ReadOnly)
     if data_set is None:
         print(f"Cannot open {file}")
         return None
@@ -60,7 +68,7 @@ def read_array(
 
 
 def read_geo(
-    file_path: Path
+    file_path: Union[Path, str]
 ) -> Tuple[Optional[Tuple[int, int]], Optional[tuple], Optional[str]]:
     '''
     Read tif file and get geotransform and projection
@@ -77,7 +85,7 @@ def read_geo(
 
 
 def save_without_memory_mapping(
-    save_path: Path,
+    save_path: Union[Path, str],
     data: np.ndarray,
     geotransform: tuple,
     projection: str,
@@ -92,13 +100,17 @@ def save_without_memory_mapping(
     param: projection: str, tif file projection
     param: output_dtype: gdal.GDT_Float32, tif file data type
     '''
+    # 如果输入是 Path，将其转换为 str 对象
+    if isinstance(save_path, Path):
+        save_path = str(save_path)
+
     im_bands = 1 if len(data.shape) == 2 else data.shape[0]
     im_height, im_width = data.shape[-2:]
 
     options = ["COMPRESS=LZW"]  # 使用LZW压缩
     driver = gdal.GetDriverByName("GTiff")
     new_dataset = driver.Create(
-        str(save_path),
+        save_path,
         im_width, im_height, im_bands,
         output_dtype, options=options
     )
@@ -116,7 +128,7 @@ def save_without_memory_mapping(
 
 
 def save(
-    save_path: Path,
+    save_path: Union[Path, str],
     data: np.ndarray,
     geotransform: tuple,
     projection: str,
@@ -131,6 +143,10 @@ def save(
     param: projection: str, tif file projection
     param: output_dtype: gdal.GDT_Float32, tif file data type
     '''
+    # 如果输入是 Path，将其转换为 str 对象
+    if isinstance(save_path, Path):
+        save_path = str(save_path)
+
     im_bands = 1 if len(data.shape) == 2 else data.shape[0]
     im_height, im_width = data.shape[-2:]
 
@@ -148,16 +164,16 @@ def save(
 
     # 将内存数据集保存到文件
     file_driver = gdal.GetDriverByName('GTiff')
-    file_driver.CreateCopy(str(save_path), mem_dataset, 0, ["COMPRESS=LZW"])
+    file_driver.CreateCopy(save_path, mem_dataset, 0, ["COMPRESS=LZW"])
 
     mem_dataset = None  # 释放内存数据集资源
 
 
 def save_array(
-    save_path: Path,
+    save_path: Union[Path, str],
     data: np.ndarray,
     output_dtype = gdal.GDT_Float32,
-):
+) -> None:
     '''
     Save tif file from array
 
@@ -165,11 +181,15 @@ def save_array(
     param: data: np.ndarray, tif file data
     param: output_dtype: gdal.GDT_Float32, tif file data type
     '''
+    # 如果输入是 Path，将其转换为 str 对象
+    if isinstance(save_path, Path):
+        save_path = str(save_path)
+
     im_bands = 1 if len(data.shape) == 2 else data.shape[0]
     im_height, im_width = data.shape[-2:]
 
     driver = gdal.GetDriverByName("GTiff")
-    new_dataset = driver.Create(str(save_path), im_width, im_height, im_bands, output_dtype)
+    new_dataset = driver.Create(save_path, im_width, im_height, im_bands, output_dtype)
 
     if im_bands == 1:
         new_dataset.GetRasterBand(1).WriteArray(data)
@@ -346,3 +366,4 @@ if __name__ == '__main__':
 
     tif_path = Path('/Volumes/2023HSI/raw/2023_07_17/5ref/1and3_corr_elm.tif')
     data, geotransform, projection = read(tif_path)
+    save(tif_path.parent / 'test.tif', data, geotransform, projection)
