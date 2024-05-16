@@ -32,20 +32,6 @@ pip install geotifflib
 返回：
 
 1. tiff的数据矩阵（np.array）：shape = [波段，宽，长]
-2. geotransform: tuple
-3. projection: str
-
-### read_array()
-
-根据文件路径读取GeoTiff数据。
-
-输入：
-
-1. 文件路径（Path or str）
-
-返回：
-
-1. tiff的数据矩阵（np.array）：shape = [波段，宽，长]
 
 ### read_geo()
 
@@ -57,7 +43,7 @@ pip install geotifflib
 
 返回：
 
-1. tiff的[宽，长]: tuple[int, int]
+1. tiff的数据矩阵（np.array）：shape = [波段，宽，长]
 2. geotransform: tuple
 3. projection: str
 

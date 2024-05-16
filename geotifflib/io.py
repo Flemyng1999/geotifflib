@@ -15,7 +15,7 @@ from osgeo import gdal
 import numpy as np
 
 
-def read(
+def read_geo(
     file_path: Union[Path, str]
 ) -> Tuple[Optional[np.ndarray], Optional[tuple], Optional[str]]:
     '''
@@ -42,7 +42,7 @@ def read(
     return data, geotransform, projection
 
 
-def read_array(
+def read(
     file: Union[Path, str]
 ) -> Optional[np.ndarray]:
     '''
@@ -65,23 +65,6 @@ def read_array(
     img_data = data_set.ReadAsArray(0, 0, img_width, img_height)
 
     return img_data
-
-
-def read_geo(
-    file_path: Union[Path, str]
-) -> Tuple[Optional[Tuple[int, int]], Optional[tuple], Optional[str]]:
-    '''
-    Read tif file and get geotransform and projection
-
-    param: file_path: Path, tif file path
-    return: size: Tuple[int, int], geotransform: tuple, projection: str
-    '''
-    data, geotransform, projection = read_tif(file_path)
-    if data is not None:
-        height, width = data.shape[-2:]
-        return (height, width), geotransform, projection
-    else:
-        return None, None, None
 
 
 def save_without_memory_mapping(
