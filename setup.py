@@ -19,7 +19,7 @@ setup(
         'License :: OSI Approved :: Apache Software License',
         'Operating System :: OS Independent',
     ],
-    python_requires='>=3.6',
+    python_requires='>=3.10',
     install_requires=[
         'GDAL',
         'numpy',
