@@ -1,113 +1,42 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-'''
-@File    :   main.py
-@Time    :   2024/04/23 15:10:20
-@Author  :   Flemyng 
-@Desc    :   GeoTiff kit for reading ,writing tiff file and ect.
-'''
 
 import os
 from pathlib import Path
-from typing import Tuple, Optional, Union
+from typing import Tuple, Optional, Union, Callable, List
 
-from osgeo import gdal
 import numpy as np
+from osgeo import gdal, osr
 
 
 def read_geo(
     file_path: Union[Path, str]
 ) -> Tuple[Optional[np.ndarray], Optional[tuple], Optional[str]]:
-    '''
-    Read tif file
-
-    param: file_path: Path or str, tif file path
-    return: data: np.ndarray [band, width, height], geotransform: tuple, projection: str
-    '''
-    # 如果输入是 Path，将其转换为 str 对象
+    """
+    读取 GeoTIFF 文件，返回数据 (np.ndarray)、地理变换 (tuple) 和投影 (str)。
+    读出的数据默认形状：若是多波段则 [bands, height, width]，单波段则 [height, width]。
+    """
+    # 如果输入是 Path，则转换为字符串
     if isinstance(file_path, Path):
         file_path = str(file_path)
 
-    ds = gdal.Open(file_path)
+    ds = gdal.Open(file_path, gdal.GA_ReadOnly)
     if ds is None:
-        print(f"Cannot open {file_path}")
+        print(f"[read_geo] Cannot open {file_path}")
         return None, None, None
 
     width = ds.RasterXSize
     height = ds.RasterYSize
+
+    # ReadAsArray 会根据波段数量返回不同形状：
+    #  - 多波段：shape=(bands, height, width)
+    #  - 单波段：shape=(height, width)
     data = ds.ReadAsArray(0, 0, width, height)
     geotransform = ds.GetGeoTransform()
     projection = ds.GetProjection()
 
+    ds = None  # 关闭数据集
     return data, geotransform, projection
-
-
-def read(
-    file_path: Union[Path, str]
-) -> Optional[np.ndarray]:
-    '''
-    Read tif file as array
-
-    param: file: Path, tif file path
-    return: data: np.ndarray
-    '''
-    # 如果输入是 Path，将其转换为 str 对象
-    if isinstance(file_path, Path):
-        file_path = str(file_path)
-
-    data_set = gdal.Open(file_path, gdal.GA_ReadOnly)
-    if data_set is None:
-        print(f"Cannot open {file_path}")
-        return None
-
-    img_width = data_set.RasterXSize
-    img_height = data_set.RasterYSize
-    img_data = data_set.ReadAsArray(0, 0, img_width, img_height)
-
-    return img_data
-
-
-def save_without_memory_mapping(
-    save_path: Union[Path, str],
-    data: np.ndarray,
-    geotransform: tuple,
-    projection: str,
-    output_dtype = gdal.GDT_Float32,
-) -> None:
-    '''
-    Save tif file without memory mapping
-
-    param: save_path: Path, tif file save path
-    param: data: np.ndarray, tif file data
-    param: geotransform: tuple, tif file geotransform
-    param: projection: str, tif file projection
-    param: output_dtype: gdal.GDT_Float32, tif file data type
-    '''
-    # 如果输入是 Path，将其转换为 str 对象
-    if isinstance(save_path, Path):
-        save_path = str(save_path)
-
-    im_bands = 1 if len(data.shape) == 2 else data.shape[0]
-    im_height, im_width = data.shape[-2:]
-
-    options = ["COMPRESS=LZW"]  # 使用LZW压缩
-    driver = gdal.GetDriverByName("GTiff")
-    new_dataset = driver.Create(
-        save_path,
-        im_width, im_height, im_bands,
-        output_dtype, options=options
-    )
-    new_dataset.SetGeoTransform(geotransform)
-    new_dataset.SetProjection(projection)
-
-    if im_bands == 1:
-        new_dataset.GetRasterBand(1).WriteArray(data)
-    else:
-        for i in range(im_bands):
-            new_dataset.GetRasterBand(i + 1).WriteArray(data[i])
-
-    new_dataset = None  # 确保数据被写入并释放资源
-    driver = None
 
 
 def save(
@@ -117,71 +46,130 @@ def save(
     projection: str,
     output_dtype=gdal.GDT_Float32
 ) -> None:
-    '''
-    Save tif file with memory mapping
-
-    param: save_path: Path, tif file save path
-    param: data: np.ndarray, tif file data
-    param: geotransform: tuple, tif file geotransform
-    param: projection: str, tif file projection
-    param: output_dtype: gdal.GDT_Float32, tif file data type
-    '''
-    # 如果输入是 Path，将其转换为 str 对象
+    """
+    使用内存映射的方式保存为 GeoTIFF，默认带 LZW 压缩，并指定 PHOTOMETRIC=MINISBLACK 以避免 ExtraSamples 警告。
+    
+    :param save_path: 输出文件路径 (Path | str)
+    :param data: np.ndarray, [bands, height, width] 或 [height, width]
+    :param geotransform: 地理变换 (tuple)
+    :param projection: 投影 (WKT str)
+    :param output_dtype: GDAL 数据类型 (默认为 gdal.GDT_Float32)
+    """
     if isinstance(save_path, Path):
         save_path = str(save_path)
 
-    im_bands = 1 if len(data.shape) == 2 else data.shape[0]
-    im_height, im_width = data.shape[-2:]
+    # 判断数据维度决定波段数 / 行列数
+    if len(data.shape) == 2:
+        im_bands = 1
+        im_height, im_width = data.shape
+    else:
+        im_bands, im_height, im_width = data.shape
 
-    # 创建内存数据集
-    mem_driver = gdal.GetDriverByName('MEM')
-    mem_dataset = mem_driver.Create('', im_width, im_height, im_bands, output_dtype)
+    # 1) 创建内存数据集（MEM driver）
+    mem_driver = gdal.GetDriverByName("MEM")
+    mem_ds = mem_driver.Create('', im_width, im_height, im_bands, output_dtype)
+    if not mem_ds:
+        raise IOError("Cannot create in-memory dataset.")
 
-    # 设置地理变换和投影
-    mem_dataset.SetGeoTransform(geotransform)
-    mem_dataset.SetProjection(projection)
+    # 设置地理信息
+    mem_ds.SetGeoTransform(geotransform)
+    mem_ds.SetProjection(projection)
 
-    # 写入数据到内存数据集
-    for i in range(im_bands):
-        mem_dataset.GetRasterBand(i + 1).WriteArray(data[i])
-
-    # 将内存数据集保存到文件
-    file_driver = gdal.GetDriverByName('GTiff')
-    file_driver.CreateCopy(save_path, mem_dataset, 0, ["COMPRESS=LZW"])
-
-    mem_dataset = None  # 释放内存数据集资源
-
-
-def save_array(
-    save_path: Union[Path, str],
-    data: np.ndarray,
-    output_dtype = gdal.GDT_Float32,
-) -> None:
-    '''
-    Save tif file from array
-
-    param: save_path: Path, tif file save path
-    param: data: np.ndarray, tif file data
-    param: output_dtype: gdal.GDT_Float32, tif file data type
-    '''
-    # 如果输入是 Path，将其转换为 str 对象
-    if isinstance(save_path, Path):
-        save_path = str(save_path)
-
-    im_bands = 1 if len(data.shape) == 2 else data.shape[0]
-    im_height, im_width = data.shape[-2:]
-
-    driver = gdal.GetDriverByName("GTiff")
-    new_dataset = driver.Create(save_path, im_width, im_height, im_bands, output_dtype)
-
+    # 将数据写入内存数据集
     if im_bands == 1:
-        new_dataset.GetRasterBand(1).WriteArray(data)
+        mem_ds.GetRasterBand(1).WriteArray(data)
     else:
         for i in range(im_bands):
-            new_dataset.GetRasterBand(i + 1).WriteArray(data[i])
+            mem_ds.GetRasterBand(i + 1).WriteArray(data[i])
 
-    new_dataset = None
-    driver = None
+    # 2) 使用 CreateCopy 或 CreateCopy-like 方法将内存数据集保存到硬盘
+    #    这里使用 CreateCopy，带上创建选项 COMPRESS=LZW + PHOTOMETRIC=MINISBLACK
+    file_driver = gdal.GetDriverByName("GTiff")
+    creation_opts = [
+        "COMPRESS=LZW",              # 压缩
+        "PHOTOMETRIC=MINISBLACK"     # 避免 ExtraSamples 警告
+    ]
+    file_driver.CreateCopy(save_path, mem_ds, 0, creation_opts)
+
+    # 清理内存数据集
+    mem_ds = None
+
+
+def save_without_memory_mapping(
+    save_path: Union[Path, str],
+    data: np.ndarray,
+    geotransform: tuple,
+    projection: str,
+    output_dtype=gdal.GDT_Float32,
+) -> None:
+    """
+    直接将数据写入到 GeoTIFF 文件（无内存映射）。
+    同样指定 PHOTOMETRIC=MINISBLACK，避免多波段时出现 ExtraSamples 警告。
+
+    :param save_path: 输出的 GeoTIFF 文件路径
+    :param data: np.ndarray, shape=[bands, height, width] 或 [height, width]
+    :param geotransform: (tuple) 地理变换
+    :param projection: (str) 投影 (WKT)
+    :param output_dtype: (GDAL DataType) 输出数据类型
+    """
+    if isinstance(save_path, Path):
+        save_path = str(save_path)
+
+    # 判断数据维度
+    if len(data.shape) == 2:
+        im_bands = 1
+        im_height, im_width = data.shape
+    else:
+        im_bands, im_height, im_width = data.shape
+
+    driver = gdal.GetDriverByName("GTiff")
+    creation_opts = [
+        "COMPRESS=LZW",
+        "PHOTOMETRIC=MINISBLACK"
+    ]
+    out_ds = driver.Create(
+        save_path,
+        im_width,
+        im_height,
+        im_bands,
+        output_dtype,
+        options=creation_opts
+    )
+    if not out_ds:
+        raise IOError(f"Cannot create file {save_path}")
+
+    # 设置地理信息
+    out_ds.SetGeoTransform(geotransform)
+    out_ds.SetProjection(projection)
+
+    # 写数组到波段
+    if im_bands == 1:
+        out_ds.GetRasterBand(1).WriteArray(data)
+    else:
+        for i in range(im_bands):
+            out_ds.GetRasterBand(i + 1).WriteArray(data[i])
+
+    out_ds.FlushCache()
+    out_ds = None
+
+
+def read(file_path: Union[Path, str]) -> Optional[np.ndarray]:
+    """
+    仅返回数据本身（np.ndarray），不返回投影和地理变换。
+    """
+    if isinstance(file_path, Path):
+        file_path = str(file_path)
+
+    ds = gdal.Open(file_path, gdal.GA_ReadOnly)
+    if ds is None:
+        print(f"[read] Cannot open {file_path}")
+        return None
+
+    w = ds.RasterXSize
+    h = ds.RasterYSize
+    arr = ds.ReadAsArray(0, 0, w, h)
+    ds = None
+    return arr
 
 
 def hsi_to_rgb(
@@ -191,46 +179,42 @@ def hsi_to_rgb(
     b_band_index: int,
 ) -> np.ndarray:
     """
-    Convert hyperspectral image data to RGB image data.
-
-    param: hsi_data: np.ndarray: The hyperspectral image data, default shape is [band, width, height].
-    param: r_band_index: int: The index of the red band.
-    param: g_band_index: int: The index of the green band.
-    param: b_band_index: int: The index of the blue band.
-    return: np.ndarray: The RGB image data, shape is [width, height, 3(r, g, b)].
+    将高光谱数据指定的波段索引提取为 RGB，并进行简单归一化和 gamma 调整。
+    返回 shape = [height, width, 3]
     """
-    # Extract the RGB bands
+    # 提取RGB波段 (bands, height, width) -> 选取3个波段
     rgb_ = hsi_data[[r_band_index, g_band_index, b_band_index], :, :]
 
-    # Clean data
+    # NaN -> 0
     rgb_ = np.nan_to_num(rgb_)
     rgb_[rgb_ < 0] = 0
 
-    # Normalize data
+    # 简单归一化
     max_value = (np.mean(rgb_[1]) + 3 * np.std(rgb_[1])) * 1.5
     min_value = np.min(rgb_)
-    print(f'max: {max_value:.2f}, min: {min_value:.2f}')
+    print(f"[hsi_to_rgb] max: {max_value:.2f}, min: {min_value:.2f}")
     rgb_ = (rgb_ - min_value) / (max_value - min_value)
     rgb_ = np.clip(rgb_, 0, 1)
 
-    # Gamma correction (default gamma is 1/2.2)
+    # gamma校正
     rgb_ = rgb_ ** 0.6
 
-    # Turn background to white
+    # 背景(=0)设为白色
     rgb_[rgb_ == 0] = 1
 
+    # 转为 [height, width, 3]
     return np.moveaxis(rgb_, 0, -1)
 
 
 def make_format_coord(
     geotransform_: tuple
-) -> callable(str):
-    '''
-    Make format_coord function
+) -> Callable[[float, float], str]:
+    """
+    返回一个可用于格式化坐标的函数，用于可视化时在 matplotlib 中显示地理坐标。
 
-    param: geotransform_: tuple, geotransform of geotiff
-    return: format_coord: callable(str), format_coord function
-    '''
+    :param geotransform_: 6 元素地理变换 (origin_x, pixel_size_x, 0, origin_y, 0, pixel_size_y)
+    :return: function(x, y) -> str
+    """
     def format_coord(x, y):
         x_origin = geotransform_[0]
         y_origin = geotransform_[3]
@@ -239,7 +223,7 @@ def make_format_coord(
 
         lon = x_pixel * x + x_origin
         lat = y_pixel * y + y_origin
-        return f'x={lon:.3f}, y={lat:.3f}'
+        return f"x={lon:.3f}, y={lat:.3f}"
 
     return format_coord
 
@@ -248,105 +232,108 @@ def set_background_to_zero(
     data: np.ndarray,
     start_band: int,
     end_band: int,
-):
+) -> np.ndarray:
     """
-    将在指定波段范围内数值之和小于0的像素点在所有波段设置为0值。
-
-    Param: data: np.ndarray, 输入的多波段数据
-    Param: start_band: int, 起始波段索引
-    Param: end_band: int, 结束波段索引
-    Return: np.ndarray, 处理后的多波段数据
+    在指定的波段范围内，如果像素点各波段之和<0，则在所有波段将该像素置为0。
+    形状: data [bands, height, width]
     """
-    # 检查波段索引是否有效
     if start_band < 0 or end_band >= data.shape[0]:
-        raise ValueError("波段索引超出数组范围。")
+        raise ValueError("Band index out of range.")
 
-    # 选择指定的波段范围
-    selected_bands = data[start_band:end_band + 1]
-
-    # 计算这些波段的数值之和
-    sum_over_bands = np.sum(selected_bands, axis=0)
-
-    # 判断哪些像素点的和小于0
+    selected_bands = data[start_band:end_band + 1]  # 选取部分波段
+    sum_over_bands = np.sum(selected_bands, axis=0)  # [height, width]
     mask = sum_over_bands < 0
 
-    # 对于和小于0的像素点，将所有波段的值设置为0
     data[:, mask] = 0
-
     return data
 
-# 使用示例：
-# data = ... # 您的NumPy数组
-# modified_data = set_background_to_zero(data, 90, 100)
 
-
-def set_nodata(input_file: list, number: int=0) -> None:
+def set_nodata(
+    input_file: Union[Path, str],
+    number: float = 0
+) -> None:
     """
-    将图像中的某个number值设置为nodata。
+    将 TIFF 图像中某个数值设置为 NoData，用于后续合并（merge）时自动忽略该值。
 
-    Param: input_file: str, 输入的tif图像路径
-    Param: number: int, 需要设置为nodata的数值
+    :param input_file: 需要修改的 TIFF 文件
+    :param number: 要设置为 NoData 的值
     """
-    # 打开输入文件
+    if isinstance(input_file, Path):
+        input_file = str(input_file)
+
     ds = gdal.Open(input_file, gdal.GA_Update)
     if ds is None:
-        print(f"无法打开文件: {input_file}")
+        print(f"[set_nodata] 无法打开文件: {input_file}")
         return
 
-    # 对于每个波段，设置指定数值为nodata值
     try:
         for i in range(1, ds.RasterCount + 1):
             band = ds.GetRasterBand(i)
             band.SetNoDataValue(number)
             band.FlushCache()
     finally:
-        ds = None  # 确保关闭数据集
+        ds = None
 
 
 def merge(
-    input_files: list,
-    output_file: Path,
+    input_files: List[Union[Path, str]],
+    output_file: Union[Path, str]
 ) -> None:
     """
-    将多个tif图像合并为一个tif图像。(这个图像的背景必须是nodata, set_nodata)
-    
-    Param: input_files: list, 输入的tif图像路径列表
-    Param: output_file: Path, 输出的tif图像路径
+    将多个 GeoTIFF 文件合并到一个文件当中。要求输入文件已经使用 set_nodata() 将背景设为 NoData。
+    使用 GDAL.BuildVRT 生成临时 VRT，再由 gdal.Translate 输出为 TIFF。
     """
-    # 处理每一个输入图像，将指定值设置为nodata
-    for input_file in input_files:
-        set_nodata(input_file, 0)
+    if isinstance(output_file, Path):
+        output_file = str(output_file)
 
-    # 创建一个虚拟数据集（VRT）
-    vrt_filename = str(output_file.parent / 'temp.vrt')
-    vrt = gdal.BuildVRT(vrt_filename, input_files)
-    if vrt is None:
-        print("无法创建虚拟数据集 (VRT)")
+    # 为每个输入文件设置 NoData
+    for f in input_files:
+        set_nodata(f, 0)
+
+    # 创建临时 VRT
+    vrt_filename = os.path.join(os.path.dirname(output_file), "temp.vrt")
+    vrt_ds = gdal.BuildVRT(vrt_filename, [str(f) for f in input_files])
+    if vrt_ds is None:
+        print("[merge] 无法创建虚拟数据集 (VRT)")
         return
 
     try:
-        # 使用Translate方法将VRT转换为TIFF格式
-        gdal.Translate(str(output_file), vrt, format='GTiff')
+        # 转成 GeoTIFF
+        gdal.Translate(output_file, vrt_ds, format="GTiff")
     finally:
-        # 清理资源
-        vrt = None
+        vrt_ds = None
 
-    # 删除VRT文件
-    os.remove(vrt_filename)
-    print(f"合并完成: {output_file}")
+    # 删除临时 VRT
+    if os.path.exists(vrt_filename):
+        os.remove(vrt_filename)
+
+    print(f"[merge] 合并完成 => {output_file}")
 
 
 if __name__ == '__main__':
-    # 测试
-    # input_files_pathes = [
-    #     '/Volumes/2023HSI/raw/2023_07_17/5ref/1_corr_elm.tif',
-    #     '/Volumes/2023HSI/raw/2023_07_17/5ref/3_corr_elm.tif'
-    # ]
-    # output_path = Path('/Volumes/2023HSI/raw/2023_07_17/5ref/1and3_corr_elm.tif')
+    # 下面是一个简单的测试示例，使用前请自行修改路径。
+    
+    # 假设我们有一个示例输入影像 example_input.tif
+    example_input = Path("example_input.tif")
 
-    # # 合并图像
-    # merge(input_files_pathes, output_path)
+    # 1) 读取
+    data_arr, geo_t, proj = read_geo(example_input)
+    if data_arr is not None:
+        print("读到的数据形状:", data_arr.shape)
+        print("地理变换:", geo_t)
+        print("投影信息:", proj)
 
-    tif_path = Path('/Volumes/2023HSI/raw/2023_07_17/5ref/1and3_corr_elm.tif')
-    data, geotransform, projection = read(tif_path)
-    save(tif_path.parent / 'test.tif', data, geotransform, projection)
+        # 2) 保存（有内存映射）
+        out_file = Path("example_output_mem.tif")
+        save(out_file, data_arr, geo_t, proj, gdal.GDT_Float32)
+        print(f"已保存 (内存映射): {out_file}")
+
+        # 3) 保存（无内存映射）
+        out_file2 = Path("example_output_direct.tif")
+        save_without_memory_mapping(out_file2, data_arr, geo_t, proj, gdal.GDT_Float32)
+        print(f"已保存 (直接写出): {out_file2}")
+
+    # 若需要合并图像：
+    # input_files = ["image1.tif", "image2.tif"]
+    # merged_output = "merged_output.tif"
+    # merge(input_files, merged_output)
