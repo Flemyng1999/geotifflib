@@ -86,7 +86,8 @@ def save(
     #    这里使用 CreateCopy，带上创建选项 COMPRESS=LZW + PHOTOMETRIC=MINISBLACK
     file_driver = gdal.GetDriverByName("GTiff")
     creation_opts = [
-        "COMPRESS=LZW",              # 压缩
+        "COMPRESS=LZW",  # 压缩
+        "PHOTOMETRIC=MINISBLACK",  # 避免 ExtraSamples 警告
     ]
     file_driver.CreateCopy(save_path, mem_ds, 0, creation_opts)
 
@@ -124,6 +125,7 @@ def save_without_memory_mapping(
     driver = gdal.GetDriverByName("GTiff")
     creation_opts = [
         "COMPRESS=LZW",
+        "PHOTOMETRIC=MINISBLACK",  # 避免 ExtraSamples 警告
     ]
     out_ds = driver.Create(
         save_path,
@@ -175,6 +177,7 @@ def hsi_to_rgb(
     r_band_index: int,
     g_band_index: int,
     b_band_index: int,
+    if_print: bool = False
 ) -> np.ndarray:
     """
     将高光谱数据指定的波段索引提取为 RGB，并进行简单归一化和 gamma 调整。
@@ -190,7 +193,8 @@ def hsi_to_rgb(
     # 简单归一化
     max_value = (np.mean(rgb_[1]) + 3 * np.std(rgb_[1])) * 1.5
     min_value = np.min(rgb_)
-    print(f"[hsi_to_rgb] max: {max_value:.2f}, min: {min_value:.2f}")
+    if if_print:
+        print(f"[hsi_to_rgb] max: {max_value:.2f}, min: {min_value:.2f}")
     rgb_ = (rgb_ - min_value) / (max_value - min_value)
     rgb_ = np.clip(rgb_, 0, 1)
 
