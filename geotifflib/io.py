@@ -87,7 +87,6 @@ def save(
     file_driver = gdal.GetDriverByName("GTiff")
     creation_opts = [
         "COMPRESS=LZW",              # 压缩
-        "PHOTOMETRIC=MINISBLACK"     # 避免 ExtraSamples 警告
     ]
     file_driver.CreateCopy(save_path, mem_ds, 0, creation_opts)
 
@@ -125,7 +124,6 @@ def save_without_memory_mapping(
     driver = gdal.GetDriverByName("GTiff")
     creation_opts = [
         "COMPRESS=LZW",
-        "PHOTOMETRIC=MINISBLACK"
     ]
     out_ds = driver.Create(
         save_path,
